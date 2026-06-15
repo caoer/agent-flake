@@ -36,14 +36,21 @@ let
 
   # Agents spawned by the daemon need the user's tools: ucc-installed
   # claude/ccc-statusd (~/.local/bin, ucc bin), then HM/system profiles.
+  #
+  # /run/wrappers/bin MUST precede /run/current-system/sw/bin: the setuid
+  # wrappers (sudo, mount, ping…) live there, while sw/bin holds the plain
+  # non-setuid store binaries. With sw/bin first, `sudo` from an agent shell
+  # resolves to the store copy and dies with "must be owned by uid 0 and have
+  # the setuid bit set". Wrappers first = sudo works from agent shells
+  # (xu-lax hard-won finding, preserved on extraction).
   agentPath =
     name: home:
     builtins.concatStringsSep ":" [
       "${home}/.local/bin"
       "${home}/.local/share/ucc/bin"
       "/etc/profiles/per-user/${name}/bin"
-      "/run/current-system/sw/bin"
       "/run/wrappers/bin"
+      "/run/current-system/sw/bin"
       "/nix/var/nix/profiles/default/bin"
     ];
 

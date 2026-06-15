@@ -122,7 +122,7 @@ let
       officialMarketplaceAutoInstalled = false;
       tui = "fullscreen";
       verbose = false;
-      model = "claude-fable-5[1m]";
+      model = "claude-opus-4-8[1m]";
       enableWorkflows = false;
       workflowKeywordTriggerEnabled = false;
     };
