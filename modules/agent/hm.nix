@@ -28,6 +28,41 @@ let
 
   sourceType = lib.types.nullOr (lib.types.either lib.types.path lib.types.str);
   resolve = src: if builtins.isString src then config.lib.file.mkOutOfStoreSymlink src else src;
+
+  # Claude settings.json deploy (osf.agentHome.claudeSettings) — the Foreign /
+  # HM-standalone analogue of the NixOS path's agent-claude-settings-<user>
+  # systemd unit (ucc.nix) and of locus `just preset`: write one settings.json
+  # into every ucc profile + merge a small .claude.json patch. Profiles are
+  # created by the ucc installer at runtime, so a glob-loop in an activation
+  # step (not home.file) is the only way to reach them; preset-bak mirrors the
+  # locus backup. On NixOS hosts this stays null (the systemd unit owns the
+  # deploy) — no double-apply.
+  settingsFile = pkgs.writeText "claude-settings.json" (builtins.toJSON cfg.claudeSettings);
+  claudeJsonPatch = builtins.toJSON {
+    autoUpdates = false;
+    autoCompactEnabled = false;
+  };
+  applyClaudeSettings = pkgs.writeShellScript "apply-claude-settings" ''
+    set -euo pipefail
+    profiles="${home}/.local/share/ucc/profiles"
+    [ -d "$profiles" ] || { echo "ucc profiles dir absent — skipping settings deploy"; exit 0; }
+    count=0
+    for pf in "$profiles"/*/settings.json; do
+      [ -f "$pf" ] || continue
+      dir=$(dirname "$pf")
+      cp "$pf" "$dir/settings.json.preset-bak" 2>/dev/null || true
+      cp ${settingsFile} "$pf"
+      # Merge keys into .claude.json, preserve the rest (create if missing).
+      cj="$dir/.claude.json"
+      if [ -f "$cj" ]; then
+        ${pkgs.jq}/bin/jq '. * ${claudeJsonPatch}' "$cj" > "$cj.tmp" && mv "$cj.tmp" "$cj"
+      else
+        echo '${claudeJsonPatch}' > "$cj"
+      fi
+      count=$((count + 1))
+    done
+    echo "claude settings: applied to $count profile(s)"
+  '';
 in
 {
   options.osf.agentHome = {
@@ -63,6 +98,33 @@ in
       default = true;
       description = "Install the OpenAI codex CLI (nixpkgs) — paseo's native codex provider drives it.";
     };
+
+    codexConfigSource = lib.mkOption {
+      type = sourceType;
+      default = null;
+      description = ''
+        codex config → ~/.codex/config.toml. String = out-of-store symlink
+        (live-edit), path = store copy. null = unmanaged. Only config.toml is
+        declarative — codex's runtime state (goals/state/memories/logs sqlite,
+        installation_id, OAuth) stays mutable per-host, never in the nix store.
+      '';
+    };
+
+    claudeSettings = lib.mkOption {
+      type = lib.types.nullOr lib.types.attrs;
+      default = null;
+      description = ''
+        Claude Code settings.json content (attrset). When set, an HM activation
+        applies it to every ~/.local/share/ucc/profiles/*/settings.json (backing
+        the prior file up to settings.json.preset-bak) and merges
+        {autoUpdates, autoCompactEnabled} = false into each profile's
+        .claude.json. The Foreign / HM-standalone analogue of the NixOS path's
+        agent-claude-settings-<user> systemd unit (which owns this deploy on
+        NixOS hosts — leave this null there to avoid a double-apply). The ucc
+        installer creates profiles at runtime, so this runs on each HM switch
+        over whatever profiles exist. null = unmanaged.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -96,6 +158,23 @@ in
           source = resolve cfg.paseoConfigSource;
           force = true;
         };
+      }
+      // lib.optionalAttrs (cfg.codexConfigSource != null) {
+        # config.toml only — siblings (the *.sqlite runtime DBs) are left alone.
+        ".codex/config.toml" = {
+          source = resolve cfg.codexConfigSource;
+          force = true;
+        };
+      };
+
+      # Settings deploy — runtime ucc profiles can't be reached by home.file, so
+      # apply over the glob in an activation step (after the writeBoundary, where
+      # mutating the live home is allowed). $DRY_RUN_CMD keeps `build`/dry-run
+      # side-effect-free.
+      activation = lib.optionalAttrs (cfg.claudeSettings != null) {
+        deployClaudeSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+          $DRY_RUN_CMD ${applyClaudeSettings}
+        '';
       };
     };
   };
