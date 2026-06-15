@@ -74,6 +74,20 @@ in
         wants = [ "network-online.target" ];
         wantedBy = [ "multi-user.target" ];
 
+        # Clean restart (fleet stability). paseo runs its agents as DIRECT
+        # CHILD PROCESSES in this unit's cgroup — there is no session reattach
+        # (upstream 0.1.96). So an agent that runs `nixos-rebuild switch` from
+        # inside paseo would, by systemd default (restartIfChanged=true,
+        # KillMode=control-group), watch the switch SIGTERM the whole cgroup and
+        # kill itself + its in-flight rebuild. Decouple the daemon restart from
+        # the switch: a switch activates the new generation but leaves the
+        # RUNNING daemon (and its agents) untouched. The new paseo version /
+        # config.json applies on the next DELIBERATE restart (when no session is
+        # mid-flight: `systemctl restart paseo-${name}`) or on reboot.
+        # Crash-recovery is unaffected — `Restart = on-failure` still applies.
+        restartIfChanged = false;
+        stopIfChanged = false;
+
         environment = {
           NODE_ENV = "production";
           PASEO_HOME = paseoHome;
