@@ -96,7 +96,18 @@ in
     codex.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Install the OpenAI codex CLI (nixpkgs) — paseo's native codex provider drives it.";
+      description = "Install the codex CLI (osf.agentHome.codex.package) — paseo's native codex provider drives it.";
+    };
+
+    codex.package = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.callPackage ../../packages/codex.nix { };
+      defaultText = lib.literalExpression "agent-flake's pinned packages/codex.nix (ahead of nixpkgs)";
+      description = ''
+        codex CLI package. Defaults to agent-flake's pinned build (one fleet
+        version, bumped centrally in packages/codex.nix). Override per-host for
+        an outlier (e.g. pkgs.codex from nixpkgs).
+      '';
     };
 
     codexConfigSource = lib.mkOption {
@@ -136,7 +147,7 @@ in
       ];
       sessionVariables.UCC_HOME = "${home}/.local/share/ucc";
 
-      packages = lib.optional cfg.codex.enable pkgs.codex;
+      packages = lib.optional cfg.codex.enable cfg.codex.package;
 
       file = {
         # claude = configured ucc launcher. Dangling until the ucc

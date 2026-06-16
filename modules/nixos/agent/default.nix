@@ -35,17 +35,23 @@
 }:
 let
   cfg = config.osf.agent;
+  agentLib = import ../../agent/lib.nix { inherit pkgs; };
 
   userOpts = lib.types.submodule (_: {
     options = {
-      systemPromptFile = lib.mkOption {
-        type = lib.types.str;
-        default = "${cfg.repoRoot}/config/agent/SYSTEM_PROMPT.md";
+      systemPromptSource = lib.mkOption {
+        type = lib.types.either lib.types.path lib.types.str;
+        default = ../../../assets/SYSTEM_PROMPT.md;
+        defaultText = lib.literalExpression "agent-flake's canonical assets/SYSTEM_PROMPT.md (immutable store copy)";
         description = ''
-          Absolute path (on the target host) of the Claude Code system
-          prompt file. Symlinked out-of-store to
-          ~/.local/share/ucc/shared/SYSTEM_PROMPT.md, which ucc-auto
-          passes via --system-prompt-file.
+          Claude Code system prompt → ~/.local/share/ucc/shared/SYSTEM_PROMPT.md
+          (ucc-auto passes it via --system-prompt-file). Defaults to
+          agent-flake's canonical prompt as a nix PATH → an immutable store copy,
+          so the fleet stays uniform (rebuild to change). Per-host ESCAPE HATCH:
+          set a STRING absolute path (e.g.
+          "''${config.osf.agent.repoRoot}/config/agent/SYSTEM_PROMPT.md") for an
+          out-of-store live-edit symlink, or another nix path for a different
+          store copy.
         '';
       };
       paseoConfigFile = lib.mkOption {
@@ -135,11 +141,13 @@ in
 
     uccVersion = lib.mkOption {
       type = lib.types.str;
-      default = "1.11.14";
+      default = agentLib.defaultUccVersion;
+      defaultText = lib.literalExpression "agent-flake's central defaultUccVersion (modules/agent/lib.nix)";
       description = ''
-        Desired ccc-statusd version — the fleet-wide central default lives
-        HERE. Bump → rebuild → installer re-runs (nix as updater). Override
-        per-host with osf.agent.uccVersion.
+        Desired ccc-statusd version. The fleet-wide central default lives in
+        modules/agent/lib.nix (shared with the Foreign module). Bump → rebuild →
+        installer re-runs (nix as updater). Override per-host with
+        osf.agent.uccVersion.
       '';
     };
 

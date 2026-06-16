@@ -1,0 +1,37 @@
+Fix local speech (dictation/voice) in the Nix build.
+
+The local speech worker is forked at runtime (worker-client.js resolves
+./worker-process.js next to itself), but upstream's trace-daemon.mjs
+doesn't list it as an entry point — @vercel/nft can't follow fork
+boundaries — so $out/lib/paseo lacks worker-process.js and the daemon
+dies with MODULE_NOT_FOUND on session.create (dictationStt).
+
+Add the worker as a trace entry point and ship the sherpa-onnx runtime
+it loads: sherpa-onnx-node (JS wrapper) and the host platform package
+(prebuilt .node addon + shared libs — nothing to compile, so the
+"speech native modules left unbuilt" build-phase stance still holds).
+
+--- a/scripts/trace-daemon.mjs
++++ b/scripts/trace-daemon.mjs
+@@ -26,6 +26,9 @@
+   "packages/cli/dist/index.js",
+   "packages/server/dist/scripts/supervisor-entrypoint.js",
+   "packages/server/dist/server/terminal/terminal-worker-process.js",
++  // Local speech worker — also forked into its own Node process
++  // (worker-client.js resolves ./worker-process.js at runtime).
++  "packages/server/dist/server/server/speech/providers/local/worker-process.js",
+ ];
+
+ // Files read at runtime via fs APIs rather than `require`. nft only
+@@ -45,6 +48,11 @@
+   // the Nix derivation builds for one platform at a time and ships only
+   // its own binaries.
+   `node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
++  // sherpa-onnx runtime for the local speech worker. The JS wrapper
++  // requires a platform package (prebuilt addon + shared libs) resolved
++  // dynamically — nft can't trace it, so pin to the host platform.
++  "node_modules/sherpa-onnx-node/**",
++  `node_modules/sherpa-onnx-${process.platform === "win32" ? "win" : process.platform}-${process.arch}/**`,
+ ];
+
+ // Trace.

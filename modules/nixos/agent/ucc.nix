@@ -12,9 +12,11 @@
 #                              wiki/outbox/presets.nix)
 #   ~/.local/bin/claude        → ~/.local/share/ucc/bin/ucc-auto
 #   ~/.local/share/ucc/shared/SYSTEM_PROMPT.md
-#                              → out-of-store symlink (live-edit; consumed by
-#                              ucc-auto via --system-prompt-file)
-#   codex CLI (nixpkgs)        when codex.enable (paseo's native provider)
+#                              → flake-canonical store copy by default
+#                              (osf.agent.users.<n>.systemPromptSource; consumed
+#                              by ucc-auto via --system-prompt-file). A string
+#                              source switches it to a live-edit symlink.
+#   codex CLI (flake-pinned)   when codex.enable (paseo's native provider)
 {
   config,
   lib,
@@ -24,6 +26,10 @@
 let
   cfg = config.osf.agent;
   homeOf = name: config.users.users.${name}.home;
+
+  # Shared installer/render builders — same source the Foreign system-manager
+  # module uses, so both platforms run byte-identical ucc-installer logic.
+  agentLib = import ../../agent/lib.nix { inherit pkgs; };
 
   # --- Claude Code profile settings (mirrors locus presets.nix baseSettings) ---
   statusdHook =
@@ -132,74 +138,18 @@ let
     autoCompactEnabled = false;
   };
 
-  # --- UCC installer (verbatim zt-agent-v2 logic, parameterized) ---
+  # --- UCC installer — shared builder (agent-flake modules/agent/lib.nix). The
+  # NixOS and Foreign paths run identical logic; only secret wiring differs
+  # (sops-nix paths here, foreign.secrets paths on Foreign). ---
   mkInstallerScript =
     name: ucfg:
-    let
+    agentLib.mkInstallerScript {
+      inherit name;
+      version = cfg.uccVersion;
       home = homeOf name;
-      localBin = "${home}/.local/bin";
-      uccShare = "${home}/.local/share/ucc/shared";
-    in
-    pkgs.writeShellScript "ucc-update-${name}" ''
-      set -euo pipefail
-      DESIRED="${cfg.uccVersion}"
-
-      UCC_INSTALLER_URL=$(cat ${config.sops.secrets.${ucfg.installerUrlSecret}.path})
-      ENCRYPTION_PASSWORD=$(cat ${config.sops.secrets.${ucfg.encryptionPasswordSecret}.path})
-
-      CURRENT=""
-      if [ -x "${localBin}/ccc-statusd" ]; then
-        CURRENT=$("${localBin}/ccc-statusd" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
-      fi
-
-      # Full-stack check: ccc-statusd version match AND node binary works.
-      if [ "$CURRENT" = "$DESIRED" ] && [ -x "${uccShare}/node/bin/node" ] \
-         && "${uccShare}/node/bin/node" --version >/dev/null 2>&1; then
-        echo "ucc: v$DESIRED already installed, skipping"
-        exit 0
-      fi
-
-      echo "ucc: updating $CURRENT → $DESIRED"
-      export ENCRYPTION_PASSWORD
-
-      # .zshrc is a read-only HM symlink on NixOS; the installer appends
-      # PATH/source lines to it. Replace with a writable copy so the
-      # installer doesn't fail at the shell RC step.
-      if [ -L "${home}/.zshrc" ]; then
-        cp -L "${home}/.zshrc" "${home}/.zshrc.tmp"
-        mv "${home}/.zshrc.tmp" "${home}/.zshrc"
-      fi
-      # cp -L preserves the store file's 444 mode — the copy is read-only
-      # even for its owner and the installer's RC append fails. Make writable.
-      if [ -f "${home}/.zshrc" ]; then
-        chmod u+w "${home}/.zshrc"
-      fi
-
-      # Download then execute — avoids curl|bash where pipe exit codes get lost.
-      TMPSCRIPT=$(mktemp /tmp/ucc-install.XXXXXX)
-      trap 'rm -f "$TMPSCRIPT"' EXIT
-      ${pkgs.curl}/bin/curl -fsSL "$UCC_INSTALLER_URL" -o "$TMPSCRIPT"
-      ${pkgs.bash}/bin/bash "$TMPSCRIPT"
-
-      # Verify ccc-statusd.
-      if [ ! -x "${localBin}/ccc-statusd" ]; then
-        echo "ucc: FATAL: ccc-statusd not found after install" >&2
-        exit 1
-      fi
-      INSTALLED=$("${localBin}/ccc-statusd" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
-      if [ "$INSTALLED" != "$DESIRED" ]; then
-        echo "ucc: FATAL: expected v$DESIRED but got v$INSTALLED" >&2
-        exit 1
-      fi
-
-      # Verify node runs (catches nix-ld / dynamic linking failures).
-      if ! "${uccShare}/node/bin/node" --version >/dev/null 2>&1; then
-        echo "ucc: FATAL: node binary at ${uccShare}/node/bin/node cannot execute (dynamic linking?)" >&2
-        exit 1
-      fi
-
-      echo "ucc: v$DESIRED installed successfully"
-    '';
+      urlSecretPath = config.sops.secrets.${ucfg.installerUrlSecret}.path;
+      passwordSecretPath = config.sops.secrets.${ucfg.encryptionPasswordSecret}.path;
+    };
 
   # --- settings sync (preset-activate pattern: copy to every profile) ---
   mkSettingsSyncScript =
@@ -323,8 +273,11 @@ in
       imports = [ ../../agent/hm.nix ];
       osf.agentHome = {
         enable = true;
-        systemPromptSource = ucfg.systemPromptFile;
+        systemPromptSource = ucfg.systemPromptSource;
         codex.enable = ucfg.codex.enable;
+        # codex.package: hm.nix defaults it to the flake-pinned codex build.
+        # claudeSettings: stays null here — the NixOS path owns the settings
+        # deploy via agent-claude-settings-<user> (no double-apply).
       };
     }) cfg.users;
   };

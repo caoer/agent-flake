@@ -34,6 +34,9 @@ let
   paseoUsers = lib.filterAttrs (_: ucfg: ucfg.paseo.enable) cfg.users;
   paseoPkg = cfg.paseoPackage;
 
+  # Shared render — same builder the Foreign system-manager module uses.
+  agentLib = import ../../agent/lib.nix { inherit pkgs; };
+
   # Agents spawned by the daemon need the user's tools: ucc-installed
   # claude/ccc-statusd (~/.local/bin, ucc bin), then HM/system profiles.
   #
@@ -60,11 +63,10 @@ let
   # render mechanism while each repo owns its own config content.
   renderPaseoConfig =
     name: home: configFile:
-    pkgs.writeText "paseo-config-${name}.json" (
-      builtins.replaceStrings [ "@UCC_BIN@" ] [ "${home}/.local/share/ucc/bin" ] (
-        builtins.readFile configFile
-      )
-    );
+    agentLib.renderPaseoConfig {
+      inherit name configFile;
+      uccBinDir = "${home}/.local/share/ucc/bin";
+    };
 in
 {
   config = lib.mkIf (cfg.enable && paseoUsers != { }) {

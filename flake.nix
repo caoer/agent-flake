@@ -37,6 +37,18 @@
       nixosModules.agent = import ./modules/nixos/agent { paseoFlake = paseo; };
       nixosModules.default = self.nixosModules.agent;
 
+      # systemManagerModules.agent — the Foreign (non-NixOS, system-manager)
+      # equivalent of nixosModules.agent's SYSTEM layer: the per-user paseo
+      # daemon + version-gated ucc installer, hand-rolled as system-manager
+      # systemd units (no users/sops NixOS options). Shares the installer-script
+      # / paseo-config-render / agentPath logic with the NixOS module via
+      # modules/agent/lib.nix — ONE source of truth across both platforms. The
+      # consumer wires its own secret delivery (foreign.secrets) and passes the
+      # resulting on-host paths; the module owns everything else. The HM layer
+      # is the same homeModules.agentHome both platforms import.
+      systemManagerModules.agent = import ./modules/system-manager/agent { paseoFlake = paseo; };
+      systemManagerModules.default = self.systemManagerModules.agent;
+
       # homeModules.agentHome — the platform-neutral home-manager fragment
       # (option `osf.agentHome`: ucc PATH wiring, claude→launcher link, system
       # prompt, paseo config, codex). Foreign / HM-standalone consumers that
@@ -46,12 +58,35 @@
       homeModules.agentHome = import ./modules/agent/hm.nix;
       homeModules.default = self.homeModules.agentHome;
 
-      # packages.<system>.paseo — the central paseo pin, re-exported so a
-      # Foreign / HM consumer (no NixOS module; hand-rolled systemd) gets the
-      # SAME paseo as the fleet without declaring its own paseo input.
-      packages = forAllSystems (system: {
-        paseo = paseo.packages.${system}.paseo;
-        default = paseo.packages.${system}.paseo;
-      });
+      # packages.<system>:
+      #   paseo         — the central paseo pin, re-exported so a Foreign / HM
+      #                   consumer gets the SAME paseo as the fleet with no own
+      #                   paseo input.
+      #   codex         — OpenAI codex CLI pinned ahead of nixpkgs (the fleet's
+      #                   agent provider). One bump here moves every host.
+      #   paseo-speech  — paseo + the local-speech-worker trace patch
+      #                   (dictation/voice). Hosts that need speech set
+      #                   `osf.agent.paseoPackage = …paseo-speech` instead of
+      #                   carrying the patch file + overrideAttrs boilerplate.
+      # codex + paseo-speech are x86_64-linux-only (the member fleet's platform:
+      # codex ships an x86_64-linux musl binary; the speech patch targets the
+      # Linux sherpa-onnx runtime).
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          paseoPkg = paseo.packages.${system}.paseo;
+        in
+        {
+          paseo = paseoPkg;
+          default = paseoPkg;
+        }
+        // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          codex = pkgs.callPackage ./packages/codex.nix { };
+          paseo-speech = paseoPkg.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ./packages/paseo-speech-worker-trace.patch ];
+          });
+        }
+      );
     };
 }
