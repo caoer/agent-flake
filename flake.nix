@@ -10,10 +10,9 @@
 
     # THE central paseo pin for the whole fleet. One bump here (rev below or
     # `nix flake update paseo`) reaches every consumer that imports this flake.
-    # Pinned to the rev osfiles currently runs (e446d900) so the first-diff
-    # re-import is byte-equivalent; bump this single line to move the fleet.
+    # Pinned to a specific rev — bump this single line to move the fleet.
     paseo = {
-      url = "github:getpaseo/paseo/e446d9009f05b5e69d7bd076196dd523ade2df61";
+      url = "github:getpaseo/paseo/60cf566b79938d62095f93faa07525d279f4a8e4";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
