@@ -11,8 +11,9 @@
     # THE central paseo pin for the whole fleet. One bump here (rev below or
     # `nix flake update paseo`) reaches every consumer that imports this flake.
     # Pinned to a specific rev — bump this single line to move the fleet.
+    # Points to caoer/paseo deploy/0xdao (npmDepsHash fix on top of v0.1.97).
     paseo = {
-      url = "github:getpaseo/paseo/60cf566b79938d62095f93faa07525d279f4a8e4";
+      url = "github:caoer/paseo/25e8ae95a";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
